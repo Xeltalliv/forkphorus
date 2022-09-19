@@ -9733,16 +9733,16 @@ var P;
         (function (canvas2d) {
             function getCSSFilter(filters) {
                 let filter = '';
-                if (filters.brightness) {
-                    filter += 'brightness(' + (100 + filters.brightness) + '%) ';
-                }
-                if (filters.color) {
-                    if (filters.color === Infinity) {
-                        filter += 'grayscale(100%) ';
-                    }
-                    else {
-                        filter += 'hue-rotate(' + (filters.color / 200 * 360) + 'deg) ';
-                    }
+                if (filters.color !== 0 || filters.brightness !== 0) {
+                    let cosA = Math.cos(filters.color / 100 * Math.PI);
+                    let cosA3 = (1 - cosA) / 3;
+                    let sinA3 = Math.sin(filters.color / 100 * Math.PI) * Math.sqrt(1 / 3);
+                    let a = cosA + cosA3;
+                    let b = cosA3 - sinA3;
+                    let c = cosA3 + sinA3;
+                    let d = Math.max(-1, Math.min(1, filters.brightness / 100));
+                    feColorMatrix.setAttribute("values", a + " " + b + " " + c + " " + d + " 0  " + c + " " + a + " " + b + " " + d + " 0  " + b + " " + c + " " + a + " " + d + " 0  0 0 0 1 0");
+                    filter += 'url(#color-matrix) ';
                 }
                 return filter;
             }
@@ -9758,6 +9758,8 @@ var P;
                 return { canvas, ctx };
             }
             const COLOR_MASK = 0b111110001111100011110000;
+            let feColorMatrix;
+            let svgFilter;
             class SpriteRenderer2D {
                 constructor() {
                     this.noEffects = false;
@@ -9822,32 +9824,45 @@ var P;
                     }
                     if (!this.noEffects) {
                         ctx.globalAlpha = Math.max(0, Math.min(1, 1 - c.filters.ghost / 100));
-                        if (c.filters.brightness !== 0 && c.filters.color === 0) {
-                            const ws = w * globalScale;
-                            const hs = h * globalScale;
-                            workingRenderer.canvas.width = ws;
-                            workingRenderer.canvas.height = hs;
-                            workingRenderer.ctx.save();
-                            workingRenderer.ctx.imageSmoothingEnabled = false;
-                            workingRenderer.ctx.translate(0, 0);
-                            workingRenderer.ctx.drawImage(image, 0, 0, ws, hs);
-                            workingRenderer.ctx.globalCompositeOperation = 'source-atop';
-                            workingRenderer.ctx.globalAlpha = Math.abs(c.filters.brightness / 100);
-                            if (c.filters.brightness > 0) {
-                                workingRenderer.ctx.fillStyle = 'white';
+                        const filter = getCSSFilter(c.filters);
+                        if (filter !== '') {
+                            ctx.filter = filter;
+                        }
+                        if (c.filters.pixelate !== 0 || c.filters.mosaic !== 0) {
+                            let ws, hs;
+                            if (c.filters.pixelate !== 0) {
+                                const effect = Math.abs(c.filters.pixelate) / 10;
+                                ws = costume.width / effect;
+                                hs = costume.height / effect;
                             }
                             else {
-                                workingRenderer.ctx.fillStyle = 'black';
+                                ws = w * globalScale;
+                                hs = h * globalScale;
                             }
-                            workingRenderer.ctx.fillRect(0, 0, ws, hs);
-                            ctx.drawImage(workingRenderer.canvas, x, y, w, h);
+                            workingRenderer.canvas.width = Math.ceil(ws);
+                            workingRenderer.canvas.height = Math.ceil(hs);
+                            workingRenderer.ctx.save();
+                            workingRenderer.ctx.imageSmoothingEnabled = false;
+                            workingRenderer.ctx.drawImage(image, 0, 0, ws, hs);
+                            ctx.imageSmoothingEnabled = false;
+                            if (c.filters.mosaic !== 0) {
+                                const effect = Math.round((Math.abs(c.filters.mosaic) + 10) / 10);
+                                const scale = w / Math.ceil(ws) / effect;
+                                ctx.scale(scale, scale);
+                                const pattern = ctx.createPattern(workingRenderer.canvas, 'repeat');
+                                if (pattern)
+                                    ctx.fillStyle = pattern;
+                                const wds = w / scale;
+                                const hds = h / scale;
+                                ctx.translate(-wds / 2, -hds / 2);
+                                ctx.fillRect(x / scale + wds / 2, y / scale + hds / 2, wds, hds);
+                            }
+                            else {
+                                ctx.drawImage(workingRenderer.canvas, 0, 0, ws, hs, x, y, w, h);
+                            }
                             workingRenderer.ctx.restore();
                         }
                         else {
-                            const filter = getCSSFilter(c.filters);
-                            if (filter !== '') {
-                                ctx.filter = filter;
-                            }
                             ctx.drawImage(image, x, y, w, h);
                         }
                     }
@@ -9876,6 +9891,17 @@ var P;
                     const { ctx: penContext, canvas: penLayer } = create2dCanvas();
                     this.penContext = penContext;
                     this.penLayer = penLayer;
+                    if (!svgFilter) {
+                        let svgFilter2 = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+                        svgFilter2.setAttribute("id", "color-matrix");
+                        let feColorMatrix2 = document.createElementNS('http://www.w3.org/2000/svg', 'feColorMatrix');
+                        feColorMatrix2.setAttribute("in", "SourceGraphic");
+                        feColorMatrix2.setAttribute("type", "matrix");
+                        feColorMatrix2.setAttribute("values", "1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0");
+                        svgFilter2.appendChild(feColorMatrix2);
+                        svgFilter = svgFilter2;
+                        feColorMatrix = feColorMatrix2;
+                    }
                 }
                 onStageFiltersChanged() {
                     this.renderStageCostume(this.zoom);
@@ -9888,6 +9914,7 @@ var P;
                     root.appendChild(this.stageLayer);
                     root.appendChild(this.penLayer);
                     root.appendChild(this.canvas);
+                    root.appendChild(svgFilter);
                 }
                 destroy() {
                 }
