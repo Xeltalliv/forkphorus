@@ -9837,7 +9837,7 @@ var P;
                     }
                     ctx.save();
                     const globalScale = c.stage.zoom * P.config.scale;
-                    ctx.translate(((c.scratchX + 240) * globalScale | 0) / globalScale, ((180 - c.scratchY) * globalScale | 0) / globalScale);
+                    ctx.translate(c.scratchX + 240, 180 - c.scratchY);
                     let objectScale = costume.scale;
                     if (P.core.isSprite(c)) {
                         if (c.rotationStyle === 0) {
@@ -10052,13 +10052,10 @@ var P;
                             continue;
                         }
                         const ob = spriteB.rotatedBounds();
-                        if (mb.bottom >= ob.top || ob.bottom >= mb.top || mb.left >= ob.right || ob.left >= mb.right) {
-                            continue;
-                        }
-                        const left = Math.max(mb.left, ob.left);
-                        const top = Math.min(mb.top, ob.top);
-                        const right = Math.min(mb.right, ob.right);
-                        const bottom = Math.max(mb.bottom, ob.bottom);
+                        const left = Math.floor(Math.max(mb.left, ob.left));
+                        const top = Math.ceil(Math.min(mb.top, ob.top));
+                        const right = Math.ceil(Math.min(mb.right, ob.right));
+                        const bottom = Math.floor(Math.max(mb.bottom, ob.bottom));
                         const width = right - left;
                         const height = top - bottom;
                         if (width < 1 || height < 1 || width !== width || height !== height) {
