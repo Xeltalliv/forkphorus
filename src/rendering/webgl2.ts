@@ -138,39 +138,48 @@ namespace P.renderer.webgl2 {
       gl_FragColor = color;
     }
     `;
-    public static penVshSrc = `
-    precision mediump float;
+    public static penVshSrc = `#version 300 es
+    precision highp float;
+
     // [0] = x1
     // [1] = y1
     // [2] = x2
     // [3] = y2
-    attribute vec4 a_vertexData;
-    // [0] = thickened vertex direction
-    // [1] = thickened vertex distance
-    attribute vec2 a_lineData;
-    // [0] = red
-    // [1] = green
-    // [2] = blue
-    // [3] = alpha
-    attribute vec4 a_color;
-    varying vec4 v_color;
+    in vec4 a_penPos;
+    in vec2 a_absPos;
+    in float a_size;
+    in vec4 a_color;
+
+    out vec4 v_color;
+    out vec2 v_absPos;
+
     void main() {
-      vec2 lineDir = normalize(a_vertexData.zw - a_vertexData.xy);
+      vec2 lineDir = a_penPos.zw - a_penPos.xy;
+      float lineLength = length(lineDir);
+      lineDir = lineLength > 0.0 ? lineDir / lineLength : vec2(0,1);
+      lineDir *= a_size;
+
+      vec2 basePos = gl_VertexID > 3 ? a_penPos.zw : a_penPos.xy;
       mat2 rot;
-      rot[0] = vec2(cos(a_lineData.x), sin(a_lineData.x));
-      rot[1] = vec2(-sin(a_lineData.x), cos(a_lineData.x));
-      lineDir *= rot * a_lineData.y;
-      vec2 p = (a_vertexData.xy + lineDir);
+      rot[0] = vec2( lineDir.x, lineDir.y);
+      rot[1] = vec2(-lineDir.y, lineDir.x);
+      vec2 p = basePos + rot * a_absPos;
       p.x /= 240.0;
       p.y /= 180.0;
       gl_Position = vec4(p, 0.0, 1.0);
-      v_color = vec4(a_color.xyz / 255.0, a_color.w);
+      v_absPos = a_absPos;
+      v_color = a_color;
     }`;
-    public static penFshSrc = `
+    public static penFshSrc = `#version 300 es
     precision mediump float;
-    varying vec4 v_color;
+
+    in vec4 v_color;
+    in vec2 v_absPos;
+    in float v_size;
+    out vec4 outColor;
+
     void main() {
-      gl_FragColor = v_color;
+      outColor = length(v_absPos) > 1.0 ? vec4(0,0,0,0) : v_color;
     }`;
 
     private gl: WebGL2RenderingContext;
@@ -457,17 +466,12 @@ namespace P.renderer.webgl2 {
     private costumeTextures: Map<P.core.Costume, WebGLTexture> = new Map();
 
 
-    private penCoords: Float32Array = new Float32Array(65536);
-    private penLines: Float32Array = new Float32Array(32768);
-    private penColors: Float32Array = new Float32Array(65536);
-
-    private penCoordsIndex: number = 0;
+    private penLines: ArrayBuffer = new ArrayBuffer(65536);
+    private penLinesF32: Float32Array = new Float32Array(this.penLines);
+    private penLinesUi8: Uint8Array = new Uint8Array(this.penLines);
     private penLinesIndex: number = 0;
-    private penColorsIndex: number = 0;
-
-    private positionBuffer: WebGLBuffer;
-    private lineBuffer: WebGLBuffer;
-    private colorBuffer: WebGLBuffer;
+    private penLineBuffer: WebGLBuffer;
+    private penShapeBuffer: WebGLBuffer;
 
     constructor(stage: P.core.Stage) {
       const canvas = document.createElement('canvas');
@@ -475,7 +479,7 @@ namespace P.renderer.webgl2 {
       canvas.height = 360;
 
       const gl = canvas.getContext('webgl2', {alpha: false});
-      if (!gl) throw new Error('cannot get webgl2 rendering context');
+      if (!gl) throw new Error('cannot get webgl 2 rendering context');
 
       this.stage = stage;
       this.canvas = canvas;
@@ -499,6 +503,20 @@ namespace P.renderer.webgl2 {
         1, 0,
         0, 1,
         1, 1,
+      ]), this.gl.STATIC_DRAW);
+
+      // Create pen line buffer
+      this.penShapeBuffer = this.gl.createBuffer()!;
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.penShapeBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1,
+        -1,  1,
+         0, -1,
+         0,  1,
+         0, -1,
+         0,  1,
+         1, -1,
+         1,  1,
       ]), this.gl.STATIC_DRAW);
 
       // Setup textures, renderbuffers and framebuffers used for pen and collision
@@ -526,18 +544,12 @@ namespace P.renderer.webgl2 {
       this.rescaleFramebuffer = this.createFramebuffer(this.collisionTexture);
 
       // Creating buffers to store pen lines before they are drawn
-      this.positionBuffer = this.gl.createBuffer()!;
-      this.lineBuffer = this.gl.createBuffer()!;
-      this.colorBuffer = this.gl.createBuffer()!;
+      this.penLineBuffer = this.gl.createBuffer()!;
 
       // Allocating space for buffers.
       // Later gl.bufferSubData is used to update their contents
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.penCoords, gl.STREAM_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.penLineBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, this.penLines, gl.STREAM_DRAW);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.penColors, gl.STREAM_DRAW);
     }
 
     drawFrame(): void {
@@ -580,381 +592,29 @@ namespace P.renderer.webgl2 {
     }
 
     penLine(color: P.core.PenColor, size: number, x1: number, y1: number, x2: number, y2: number): void {
-      if (x1 == x2 && y1 == y2) {
-        this.penDot(color, size, x1, y1);
-        return;
-      }
-
-      const circleRes = this.getCircleResolution(size);
-
       // Redraw when buffers are full.
-      if (this.buffersCanFit(24 * (circleRes + 1))) {
+      if (this.penLinesIndex+6 > this.penLinesF32.length) {
         this.drawPendingOperations();
       }
 
-      // draw line
-      // first triangle
-      // first coordinates
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
+      this.penLinesF32[this.penLinesIndex++] = x1;
+      this.penLinesF32[this.penLinesIndex++] = y1;
+      this.penLinesF32[this.penLinesIndex++] = x2;
+      this.penLinesF32[this.penLinesIndex++] = y2;
+      this.penLinesF32[this.penLinesIndex++] = size / 2;
 
-      // first coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      // first vertex description
-      this.penLines[this.penLinesIndex] = -Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      // second coordinates
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      // second coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
-
-      // second vertex description
-      this.penLines[this.penLinesIndex] = Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      // third coordinates
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
-
-      // third coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      // second vertex description
-      this.penLines[this.penLinesIndex] = Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      // second triangle
-      // first coordinates
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
-
-      // first coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      //first vertex description
-      this.penLines[this.penLinesIndex] = Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      // second coordinates
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      // second coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
-
-      // second vertex description
-      this.penLines[this.penLinesIndex] = -Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      // third coordinates
-      this.penCoords[this.penCoordsIndex] = x2;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y2;
-      this.penCoordsIndex++;
-
-      // third coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y1;
-      this.penCoordsIndex++;
-
-      // second vertex description
-      this.penLines[this.penLinesIndex] = Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      for (var i = 0; i < circleRes; i++) {
-        // first endcap
-        // first coordinates
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // first coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // first vertex description
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-
-        // second coordinates
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // second coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // second vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + i / circleRes * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-
-        // third coordinates
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // third coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // third vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + (i + 1) / circleRes * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-
-        // second endcap
-        // first coordinates
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // first coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // first vertex description
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-
-        // second coordinates
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // second coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // second vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + i / circleRes * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-
-        // third coordinates
-        this.penCoords[this.penCoordsIndex] = x1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y1;
-        this.penCoordsIndex++;
-
-        // third coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x2;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y2;
-        this.penCoordsIndex++;
-
-        // third vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + (i + 1) / circleRes * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-      }
-
+      let penColorsIndex = this.penLinesIndex * 4;
       const [r, g, b, a] = color.toParts();
+      this.penLinesUi8[penColorsIndex++] = r;
+      this.penLinesUi8[penColorsIndex++] = g;
+      this.penLinesUi8[penColorsIndex++] = b;
+      this.penLinesUi8[penColorsIndex] = a * 255;
 
-      // set color of vertices
-      for (var i = 0; i < circleRes * 6 + 6; i++) {
-        this.penColors[this.penColorsIndex] = r;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = g;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = b;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = a;
-        this.penColorsIndex++;
-      }
+      this.penLinesIndex++;
     }
 
     penDot(color: P.core.PenColor, size: number, x: number, y: number): void {
-      const circleRes = this.getCircleResolution(size);
-
-      // Redraw when buffers are full.
-      if (this.buffersCanFit(12 * circleRes)) {
-        this.drawPendingOperations();
-      }
-
-      for (var i = 1; i < circleRes; i++) {
-        // first endcap
-        // first coordinates
-        this.penCoords[this.penCoordsIndex] = x;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y;
-        this.penCoordsIndex++;
-
-        // first coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x + 1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y + 1;
-        this.penCoordsIndex++;
-
-        // first vertex description
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = 0;
-        this.penLinesIndex++;
-
-        // second coordinates
-        this.penCoords[this.penCoordsIndex] = x;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y;
-        this.penCoordsIndex++;
-
-        // second coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x + 1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y + 1;
-        this.penCoordsIndex++;
-
-        // second vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + (i - 1) / circleRes * 2 * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-
-        // third coordinates
-        this.penCoords[this.penCoordsIndex] = x;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y;
-        this.penCoordsIndex++;
-
-        // third coordinates supplement
-        this.penCoords[this.penCoordsIndex] = x + 1;
-        this.penCoordsIndex++;
-        this.penCoords[this.penCoordsIndex] = y + 1;
-        this.penCoordsIndex++;
-
-        // third vertex description
-        this.penLines[this.penLinesIndex] = Math.PI / 2 + i / circleRes * 2 * Math.PI;
-        this.penLinesIndex++;
-        this.penLines[this.penLinesIndex] = size / 2;
-        this.penLinesIndex++;
-      }
-
-      this.penCoords[this.penCoordsIndex] = x;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y;
-      this.penCoordsIndex++;
-
-      this.penCoords[this.penCoordsIndex] = x + 1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y + 1;
-      this.penCoordsIndex++;
-
-      this.penLines[this.penLinesIndex] = 0;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = 0;
-      this.penLinesIndex++;
-
-      this.penCoords[this.penCoordsIndex] = x;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y;
-      this.penCoordsIndex++;
-
-      this.penCoords[this.penCoordsIndex] = x + 1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y + 1;
-      this.penCoordsIndex++;
-
-      this.penLines[this.penLinesIndex] = Math.PI / 2 + (circleRes - 1) / circleRes * 2 * Math.PI;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      this.penCoords[this.penCoordsIndex] = x;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y;
-      this.penCoordsIndex++;
-
-      // third coordinates supplement
-      this.penCoords[this.penCoordsIndex] = x + 1;
-      this.penCoordsIndex++;
-      this.penCoords[this.penCoordsIndex] = y + 1;
-      this.penCoordsIndex++;
-
-      // third vertex description
-      this.penLines[this.penLinesIndex] = Math.PI / 2;
-      this.penLinesIndex++;
-      this.penLines[this.penLinesIndex] = size / 2;
-      this.penLinesIndex++;
-
-      const [r, g, b, a] = color.toParts();
-
-      // set color of vertices
-      for (var i = 0; i < circleRes * 3; i++) {
-        this.penColors[this.penColorsIndex] = r;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = g;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = b;
-        this.penColorsIndex++;
-        this.penColors[this.penColorsIndex] = a;
-        this.penColorsIndex++;
-      }
+      this.penLine(color, size, x, y, x, y);
     }
 
     penStamp(sprite: P.core.Base): void {
@@ -968,9 +628,7 @@ namespace P.renderer.webgl2 {
     penClear(): void {
       this.disableScissors();
       this.useFramebuffer(this.penFramebuffer, this.canvas.width, this.canvas.height);
-      this.penCoordsIndex = 0;
       this.penLinesIndex = 0;
-      this.penColorsIndex = 0;
       this.gl.clear(this.gl.COLOR_BUFFER_BIT);
     }
 
@@ -1349,9 +1007,10 @@ namespace P.renderer.webgl2 {
     }
 
     private drawPendingOperations(): void {
-      if (this.penCoordsIndex === 0) {
+      if (this.penLinesIndex === 0) {
         return;
       }
+
       this.disableScissors();
 
       const gl = this.gl;
@@ -1360,29 +1019,28 @@ namespace P.renderer.webgl2 {
       this.useShader(shader);
       this.useFramebuffer(this.penFramebuffer, this.canvas.width, this.canvas.height);
 
+      shader.attributeBuffer('a_absPos', this.penShapeBuffer);
+
       // Upload position data
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.positionBuffer);
-      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.penCoords);
-      gl.vertexAttribPointer(shader.getAttribute('a_vertexData'), 4, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(shader.getAttribute('a_vertexData'));
-
-      // Upload line info data
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuffer);
-      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.penLines);
-      gl.vertexAttribPointer(shader.getAttribute('a_lineData'), 2, gl.FLOAT, false, 0, 0);
-      gl.enableVertexAttribArray(shader.getAttribute('a_lineData'));
-
-      // Upload color data
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.penColors);
-      gl.vertexAttribPointer(shader.getAttribute('a_color'), 4, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.penLineBuffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.penLinesUi8, 0, this.penLinesIndex * 4);
+      gl.vertexAttribPointer(shader.getAttribute('a_penPos'), 4, gl.FLOAT, false, 24, 0);
+      gl.vertexAttribPointer(shader.getAttribute('a_size'), 1, gl.FLOAT, false, 24, 16);
+      gl.vertexAttribPointer(shader.getAttribute('a_color'), 4, gl.UNSIGNED_BYTE, true, 24, 20);
+      gl.vertexAttribDivisor(shader.getAttribute('a_penPos'), 1);
+      gl.vertexAttribDivisor(shader.getAttribute('a_size'), 1);
+      gl.vertexAttribDivisor(shader.getAttribute('a_color'), 1);
+      gl.enableVertexAttribArray(shader.getAttribute('a_penPos'));
+      gl.enableVertexAttribArray(shader.getAttribute('a_size'));
       gl.enableVertexAttribArray(shader.getAttribute('a_color'));
 
-      gl.drawArrays(gl.TRIANGLES, 0, (this.penCoordsIndex + 1) / 4);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 8, this.penLinesIndex / 6);
 
-      this.penCoordsIndex = 0;
+      gl.vertexAttribDivisor(shader.getAttribute('a_penPos'), 0);
+      gl.vertexAttribDivisor(shader.getAttribute('a_size'), 0);
+      gl.vertexAttribDivisor(shader.getAttribute('a_color'), 0);
+
       this.penLinesIndex = 0;
-      this.penColorsIndex = 0;
     }
 
     private createDepthRenderbuffer(width: number, height: number): WebGLRenderbuffer {
@@ -1491,14 +1149,6 @@ namespace P.renderer.webgl2 {
       this.gl.clearColor(1, 1, 1, 1);
       this.gl.clear(this.gl.COLOR_BUFFER_BIT);
       this.gl.clearColor(0, 0, 0, 0);
-    }
-
-    private buffersCanFit(size: number): boolean {
-      return this.penCoordsIndex + size > this.penCoords.length;
-    }
-
-    private getCircleResolution(size: number): number {
-      return Math.max(Math.ceil(size * this.globalScaleMatrix[0]), 3);
     }
   }
 }
