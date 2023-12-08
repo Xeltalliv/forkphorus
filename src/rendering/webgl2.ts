@@ -2,7 +2,7 @@
 /// <reference path="renderer.ts" />
 /// <reference path="matrix.ts" />
 
-namespace P.renderer.webgl {
+namespace P.renderer.webgl2 {
   import RotationStyle = P.core.RotationStyle;
 
   const horizontalInvertMatrix = P.m3.scaling(-1, 1);
@@ -173,7 +173,7 @@ namespace P.renderer.webgl {
       gl_FragColor = v_color;
     }`;
 
-    private gl: WebGLRenderingContext;
+    private gl: WebGL2RenderingContext;
 
     public noEffects: Shader;
     public allEffects: Shader;
@@ -182,7 +182,7 @@ namespace P.renderer.webgl {
     public touchingColorAllEffectsExceptGhost: Shader;
     public touchingColorNoEffects: Shader;
 
-    constructor(gl: WebGLRenderingContext) {
+    constructor(gl: WebGL2RenderingContext) {
       this.gl = gl;
       this.noEffects = this.createShader(Shaders.spriteVshSrc, Shaders.spriteFshSrc);
       this.allEffects = this.createShader(Shaders.spriteVshSrc, Shaders.spriteFshSrc, [
@@ -289,7 +289,7 @@ namespace P.renderer.webgl {
     protected uniformLocations: { [name: string]: WebGLUniformLocation } = {};
     protected attributeLocations: { [name: string]: number } = {};
 
-    constructor(public gl: WebGLRenderingContext, public program: WebGLProgram) {
+    constructor(public gl: WebGL2RenderingContext, public program: WebGLProgram) {
       // When loaded we'll lookup all of our attributes and uniforms, and store
       // their locations locally.
       // WebGL can tell us how many there are, so we can do lookups.
@@ -428,9 +428,9 @@ namespace P.renderer.webgl {
     }
   }
 
-  export class WebGLProjectRenderer implements ProjectRenderer {
+  export class WebGL2ProjectRenderer implements ProjectRenderer {
     public canvas: HTMLCanvasElement;
-    public gl: WebGLRenderingContext;
+    public gl: WebGL2RenderingContext;
     public stage: P.core.Stage;
 
     private penTexture: WebGLTexture;
@@ -474,8 +474,8 @@ namespace P.renderer.webgl {
       canvas.width = 480;
       canvas.height = 360;
 
-      const gl = canvas.getContext('webgl', {alpha: false});
-      if (!gl) throw new Error('cannot get webgl rendering context');
+      const gl = canvas.getContext('webgl2', {alpha: false});
+      if (!gl) throw new Error('cannot get webgl2 rendering context');
 
       this.stage = stage;
       this.canvas = canvas;
