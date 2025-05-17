@@ -1,0 +1,32 @@
+name: "Bug report"
+description: "Create a report to help us improve"
+title: "[Bug]"
+labels: ["bug"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search [here](https://github.com/forkphorus/forkphorus/issues) to see if an issue already exists for the bug you encountered.
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the bug, including any steps to reproduce it
+      placeholder: The sprite looks incorrectly...
+    validations:
+      required: true
+  - type: markdown
+    id: project
+    attributes:
+      label: Project(s)
+      description: Provide the ID, url or file of the project the issue occurs in
+      placeholder: https://scratch.mit.edu/projects/104
+  - type: input
+    id: device-info
+    attributes:
+      label: Device Information
+      description: Device, Operating System, Browser, etc.
+      placeholder: Android 10; Chrome 130
