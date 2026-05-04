@@ -14,7 +14,7 @@ namespace P.sb3 {
    * The path to fetch remote assets from.
    * Replace $md5ext with the md5sum and the format of the asset.
    */
-  export const ASSETS_API = 'https://assets.scratch.mit.edu/internalapi/asset/$md5ext/get/';
+  export var ASSETS_API = 'https://assets.scratch.mit.edu/internalapi/asset/$md5ext/get/';
 
   interface SB3Project {
     targets: SB3Target[];
@@ -36,10 +36,10 @@ namespace P.sb3 {
     currentCostume: number;
     rotationStyle: string;
     layerOrder: number;
-    lists: ObjectMap<SB3List>;
-    variables: ObjectMap<SB3Variable>;
-    blocks: ObjectMap<SB3Block>;
-    broadcasts: ObjectMap<string>;
+    lists: Record<string, SB3List>;
+    variables: Record<string, SB3Variable>;
+    blocks: Record<string, SB3Block>;
+    broadcasts: Record<string, string>;
     volume: number;
   }
 
@@ -81,8 +81,8 @@ namespace P.sb3 {
   export interface SB3Block {
     opcode: string;
     topLevel: boolean;
-    inputs: ObjectMap<any>;
-    fields: ObjectMap<any>;
+    inputs: Record<string, any>;
+    fields: Record<string, any>;
     mutation: any;
     parent: string | null;
     next: string | null;
@@ -117,15 +117,15 @@ namespace P.sb3 {
   // Implements a Scratch 3 Stage.
   export class Scratch3Stage extends P.core.Stage {
     public sb3data: SB3Target;
-    public listIds: ObjectMap<string> = {};
-    public varIds: ObjectMap<string> = {};
+    public listIds: Record<string, string> = {};
+    public varIds: Record<string, string> = {};
   }
 
   // Implements a Scratch 3 Sprite.
   export class Scratch3Sprite extends P.core.Sprite {
     public sb3data: SB3Target;
-    public listIds: ObjectMap<string> = {};
-    public varIds: ObjectMap<string> = {};
+    public listIds: Record<string, string> = {};
+    public varIds: Record<string, string> = {};
 
     _clone() {
       return new Scratch3Sprite(this.stage);
@@ -764,16 +764,88 @@ namespace P.sb3 {
     return svg;
   }
 
-  // Implements base SB3 loading logic.
-  // Needs to be extended to add file loading methods.
-  // Implementations are expected to set `this.projectData` to something before calling super.load()
-  export abstract class BaseSB3Loader extends P.io.Loader<P.core.Stage> {
-    protected projectData: SB3Project;
+  export class Scratch3Loader extends P.io.Loader<P.core.Stage> {
+    private input: SB3Project | ArrayBuffer | null;
+    private zip: JSZip | null = null;
     private needsMusic: boolean = false;
 
-    protected abstract getAsText(path: string): Promise<string>;
-    protected abstract getAsArrayBuffer(path: string): Promise<ArrayBuffer>;
-    protected abstract getAsImage(path: string, format: string): Promise<HTMLImageElement>;
+    constructor (input: SB3Project | ArrayBuffer) {
+      super();
+      this.input = input;
+    }
+
+    private async getAsText(path: string): Promise<string> {
+      if (this.zip) {
+        try {
+          const file = this.zip.file(path);
+          if (!file) {
+            throw new Error(`${path} does not exist in zip as text`);
+          }
+          const task = this.addTask(new P.io.Manual());
+          const text = await file.async('text');
+          task.markComplete();
+          return text;
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      return this.addTask(new P.io.Request(ASSETS_API.replace('$md5ext', path))).load('text');
+    }
+
+    private async getAsArrayBuffer(path: string): Promise<ArrayBuffer> {
+      if (this.zip) {
+        try {
+          const file = this.zip.file(path);
+          if (!file) {
+            throw new Error(`${path} does not exist in zip as text`);
+          }
+          const task = this.addTask(new P.io.Manual());
+          const buffer = await file.async('arraybuffer');
+          task.markComplete();
+          return buffer;
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      return this.addTask(new P.io.Request(ASSETS_API.replace('$md5ext', path))).load('arraybuffer');
+    }
+
+    private async getAsImage(path: string, format: string): Promise<HTMLImageElement> {
+      if (this.zip) {
+        try {
+          const file = this.zip.file(path);
+          if (!file) {
+            throw new Error(`${path} does not exist in zip as text`);
+          }
+          const task = this.addTask(new P.io.Manual());
+          const base64 = await file.async('base64');
+          const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => {
+              // Clearing event listeners helps ensure it can be GC'd properly
+              image.onload = null;
+              image.onerror = null;
+              task.markComplete();
+              resolve(image);
+            };
+            image.onerror = (error) => {
+              // Clearing event listeners helps ensure it can be GC'd properly
+              image.onload = null;
+              image.onerror = null;
+              reject(new Error('Failed to load image: ' + path + '.' + format));
+            };
+            image.src = 'data:image/' + format + ';base64,' + base64;
+          });
+          return image;
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+
+      return this.addTask(new P.io.Img(ASSETS_API.replace('$md5ext', path))).load();
+    }
 
     getSVG(path: string, costumeOptions: P.core.CostumeOptions): Promise<HTMLImageElement> {
       return this.getAsText(path)
@@ -852,44 +924,48 @@ namespace P.sb3 {
       // dirty hack for null stage
       const target = new (data.isStage ? Scratch3Stage : Scratch3Sprite)(null as any);
 
-      for (const id of Object.keys(data.variables)) {
-        const variable = data.variables[id];
-        const name = variable[0];
-        const value = variable[1];
-        if (variable.length > 2) {
-          const cloud = variable[2];
-          if (cloud) {
-            if (data.isStage) {
-              (target as Scratch3Stage).cloudVariables.push(name);
-            } else {
-              console.warn('Cloud variable found on a non-stage object. Skipping.');
+      if (Object.prototype.hasOwnProperty.call(data, 'variables')) {
+        for (const id of Object.keys(data.variables)) {
+          const variable = data.variables[id];
+          const name = variable[0];
+          const value = variable[1];
+          if (variable.length > 2) {
+            const cloud = variable[2];
+            if (cloud) {
+              if (data.isStage) {
+                (target as Scratch3Stage).cloudVariables.push(name);
+              } else {
+                console.warn('Cloud variable found on a non-stage object. Skipping.');
+              }
             }
           }
+          target.vars[name] = value;
+          target.varIds[id] = name;
         }
-        target.vars[name] = value;
-        target.varIds[id] = name;
       }
 
-      for (const id of Object.keys(data.lists)) {
-        const list = data.lists[id];
-        const name = list[0];
-        const content = list[1];
-        // There are some cases where projects has multiple lists of the same name, different ID
-        // To avoid issues caused by that, we will give the first definition precedence over later definitions.
-        if (target.lists[name]) {
-          continue;
+      if (Object.prototype.hasOwnProperty.call(data, 'lists')) {
+        for (const id of Object.keys(data.lists)) {
+          const list = data.lists[id];
+          const name = list[0];
+          const content = list[1];
+          // There are some cases where projects has multiple lists of the same name, different ID
+          // To avoid issues caused by that, we will give the first definition precedence over later definitions.
+          if (target.lists[name]) {
+            continue;
+          }
+          const scratchList = createList();
+          for (var i = 0; i < content.length; i++) {
+            scratchList[i] = content[i];
+          }
+          target.lists[name] = scratchList;
+          target.listIds[id] = name;
         }
-        const scratchList = createList();
-        for (var i = 0; i < content.length; i++) {
-          scratchList[i] = content[i];
-        }
-        target.lists[name] = scratchList;
-        target.listIds[id] = name;
       }
 
       target.name = data.name;
       target.currentCostumeIndex = data.currentCostume;
-      if ('volume' in data) {
+      if (Object.prototype.hasOwnProperty.call(data, 'volume')) {
         target.volume = data.volume / 100;
       }
       target.sb3data = data;
@@ -958,18 +1034,36 @@ namespace P.sb3 {
       }
     }
 
-    async load() {
-      if (!this.projectData) {
-        throw new Error('Project data is missing or invalid');
+    async loadProjectData(): Promise<SB3Project> {
+      if (!this.input) {
+        throw new Error('Input missing');
       }
-      if (!Array.isArray(this.projectData.targets)) {
+
+      if (this.input instanceof ArrayBuffer) {
+        this.zip = await JSZip.loadAsync(this.input);
+
+        // allow input to be GC'd earlier
+        this.input = null;
+
+        const text = await this.getAsText('project.json');
+        return JSON.parse(text);
+      }
+
+      return this.input;
+    }
+
+    async load() {
+      const projectData = await this.loadProjectData();
+
+      // Just a trivial check to make sure this isn't an sb2 file
+      if (!Array.isArray(projectData.targets)) {
         throw new Error('Invalid project data: missing targets');
       }
 
       await this.loadRequiredAssets();
 
       this.resetTasks();
-      const targets = await Promise.all(this.projectData.targets
+      const targets = await Promise.all(projectData.targets
         .sort((a, b) => a.layerOrder - b.layerOrder)
         .map((data) => this.loadTarget(data))
       );
@@ -986,8 +1080,8 @@ namespace P.sb3 {
       sprites.forEach((sprite) => sprite.stage = stage);
       stage.children = sprites;
 
-      if (this.projectData.monitors) {
-        stage.allWatchers = this.projectData.monitors
+      if (projectData.monitors) {
+        stage.allWatchers = projectData.monitors
           .map((data) => this.loadWatcher(data, stage))
           .filter((i) => i && i.valid);
         stage.allWatchers.forEach((watcher) => watcher.init());
@@ -999,130 +1093,7 @@ namespace P.sb3 {
         await this.loadSoundbank();
       }
 
-      // projectData is now unused and can be removed. This reduces memory usage
-      this.projectData = null as any;
-
       return stage;
-    }
-  }
-
-  // Loads a .sb3 file
-  export class SB3FileLoader extends BaseSB3Loader {
-    private buffer: ArrayBuffer;
-    private zip: JSZip;
-
-    constructor(buffer: ArrayBuffer) {
-      super();
-      this.buffer = buffer;
-    }
-
-    getAsText(path: string) {
-      const task = this.addTask(new P.io.Manual());
-      const file = this.zip.file(path);
-      if (!file) {
-        throw new Error('cannot find file as text: ' + path);
-      }
-      return file.async('text')
-        .then((response) => {
-          task.markComplete();
-          return response;
-        });
-    }
-
-    getAsArrayBuffer(path: string) {
-      const task = this.addTask(new P.io.Manual());
-      const file = this.zip.file(path);
-      if (!file) {
-        throw new Error('cannot find file as arraybuffer: ' + path);
-      }
-      return file.async('arraybuffer')
-        .then((response) => {
-          task.markComplete();
-          return response;
-        });
-    }
-
-    getAsBase64(path: string) {
-      const task = this.addTask(new P.io.Manual());
-      const file = this.zip.file(path);
-      if (!file) {
-        throw new Error('cannot find file as base64: ' + path);
-      }
-      return file.async('base64')
-        .then((response) => {
-          task.markComplete();
-          return response;
-        });
-    }
-
-    getAsImage(path: string, format: string) {
-      const task = this.addTask(new P.io.Manual());
-      return this.getAsBase64(path)
-        .then((imageData) => {
-          return new Promise<HTMLImageElement>((resolve, reject) => {
-            const image = new Image();
-            image.onload = () => {
-              task.markComplete();
-              resolve(image);
-            };
-            image.onerror = (error) => {
-              reject(new Error('Failed to load image: ' + path + '.' + format));
-            };
-            image.src = 'data:image/' + format + ';base64,' + imageData;
-          });
-        });
-    }
-
-    load() {
-      return JSZip.loadAsync(this.buffer)
-        .then((data) => {
-          this.zip = data;
-          return this.getAsText('project.json');
-        })
-        .then((project) => {
-          this.projectData = JSON.parse(project);
-        })
-        .then(() => super.load());
-    }
-  }
-
-  // Loads a Scratch 3 project from the scratch.mit.edu website
-  // Uses either a loaded project.json or its ID
-  export class Scratch3Loader extends BaseSB3Loader {
-    private projectId: number | null;
-
-    constructor(idOrData: number | SB3Project) {
-      super();
-      if (typeof idOrData === 'object') {
-        this.projectData = idOrData;
-        this.projectId = null;
-      } else {
-        this.projectId = idOrData;
-      }
-    }
-
-    getAsText(path: string) {
-      return this.addTask(new P.io.Request(ASSETS_API.replace('$md5ext', path))).load('text');
-    }
-
-    getAsArrayBuffer(path: string) {
-      return this.addTask(new P.io.Request(ASSETS_API.replace('$md5ext', path))).load('arraybuffer');
-    }
-
-    getAsImage(path: string) {
-      return this.addTask(new P.io.Img(ASSETS_API.replace('$md5ext', path))).load();
-    }
-
-    load() {
-      if (this.projectId) {
-        return this.addTask(new P.io.Request(P.config.PROJECT_API.replace('$id', '' + this.projectId))).load('json')
-          .then((data) => {
-            this.projectData = data;
-            return super.load();
-          });
-      } else {
-        return super.load();
-      }
     }
   }
 }
@@ -1156,7 +1127,7 @@ namespace P.sb3.compiler {
   }
 
   export const enum InputFlags {
-    NaN = 1,
+    NotANumber = 1,
   }
 
   /**
@@ -1503,10 +1474,10 @@ namespace P.sb3.compiler {
   }
 
   // Block definitions
-  export const statementLibrary: ObjectMap<StatementCompiler> = Object.create(null);
-  export const inputLibrary: ObjectMap<InputCompiler> = Object.create(null);
-  export const hatLibrary: ObjectMap<HatCompiler> = Object.create(null);
-  export const watcherLibrary: ObjectMap<WatchedValue> = Object.create(null);
+  export const statementLibrary: Record<string, StatementCompiler> = Object.create(null);
+  export const inputLibrary: Record<string, InputCompiler> = Object.create(null);
+  export const hatLibrary: Record<string, HatCompiler> = Object.create(null);
+  export const watcherLibrary: Record<string, WatchedValue> = Object.create(null);
 
   const safeNumberToString = (n: number): string => {
     // -0 toString() returns "0"
@@ -1531,7 +1502,7 @@ namespace P.sb3.compiler {
     /**
      * The blocks of this target.
      */
-    public blocks: ObjectMap<SB3Block>;
+    public blocks: Record<string, SB3Block>;
     /**
      * Total number of labels created by this compiler.
      */
@@ -1636,7 +1607,7 @@ namespace P.sb3.compiler {
       // If the types are already identical, no changes are necessary
       if (input.type === type) {
         // if the input could be NaN, number conversion is always required (NaN will be converted to 0)
-        if (type === 'number' && input.hasFlag(InputFlags.NaN)) {
+        if (type === 'number' && input.hasFlag(InputFlags.NotANumber)) {
           return new CompiledInput('(' + input.source + ' || 0)', type);
         }
         return input;
@@ -2035,7 +2006,7 @@ namespace P.sb3.compiler {
     /**
      * Parse a generated script for label locations, and remove redundant data.
      */
-    parseScript(script: string): { labels: ObjectMap<number>, script: string; } {
+    parseScript(script: string): { labels: Record<string, number>, script: string; } {
       const labels = {};
       let index = 0;
       let accumulator = 0;
@@ -3016,7 +2987,7 @@ namespace P.sb3.compiler {
     const NUM1 = util.getInput('NUM1', 'number');
     const NUM2 = util.getInput('NUM2', 'number');
     const input = util.numberInput(`(${NUM1} + ${NUM2})`);
-    input.enableFlag(P.sb3.compiler.InputFlags.NaN); // Infinity + (-Infitity)
+    input.enableFlag(P.sb3.compiler.InputFlags.NotANumber); // Infinity + (-Infitity)
     return input;
   };
   inputLibrary['operator_and'] = function(util) {
@@ -3033,7 +3004,7 @@ namespace P.sb3.compiler {
     const NUM1 = util.getInput('NUM1', 'number');
     const NUM2 = util.getInput('NUM2', 'number');
     const input = util.numberInput(`(${NUM1} / ${NUM2})`);
-    input.enableFlag(P.sb3.compiler.InputFlags.NaN); // 0 / 0
+    input.enableFlag(P.sb3.compiler.InputFlags.NotANumber); // 0 / 0
     return input;
   };
   inputLibrary['operator_equals'] = function(util) {
@@ -3101,49 +3072,49 @@ namespace P.sb3.compiler {
         return util.numberInput(`Math.floor(${NUM})`);
       case 'sqrt': {
         const input = util.numberInput(`Math.sqrt(${NUM})`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'ceiling':
         return util.numberInput(`Math.ceil(${NUM})`);
       case 'cos': {
         const input = util.numberInput(`(Math.round(Math.cos(${NUM} * Math.PI / 180) * 1e10) / 1e10)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'sin': {
         const input = util.numberInput(`(Math.round(Math.sin(${NUM} * Math.PI / 180) * 1e10) / 1e10)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'tan': {
         const input = util.numberInput(`tan3(${NUM})`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'asin': {
         const input = util.numberInput(`(Math.asin(${NUM}) * 180 / Math.PI)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'acos': {
         const input = util.numberInput(`(Math.acos(${NUM}) * 180 / Math.PI)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'atan': {
         const input = util.numberInput(`(Math.atan(${NUM}) * 180 / Math.PI)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'ln': {
         const input = util.numberInput(`Math.log(${NUM})`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'log': {
         const input = util.numberInput(`(Math.log(${NUM}) / Math.LN10)`);
-        input.enableFlag(P.sb3.compiler.InputFlags.NaN);
+        input.enableFlag(P.sb3.compiler.InputFlags.NotANumber);
         return input;
       }
       case 'e ^':
@@ -3163,7 +3134,7 @@ namespace P.sb3.compiler {
     const NUM1 = util.getInput('NUM1', 'number');
     const NUM2 = util.getInput('NUM2', 'number');
     const input = util.numberInput(`(${NUM1} * ${NUM2})`);
-    input.enableFlag(P.sb3.compiler.InputFlags.NaN); // Infinity * 0
+    input.enableFlag(P.sb3.compiler.InputFlags.NotANumber); // Infinity * 0
     return input;
   };
   inputLibrary['operator_not'] = function(util) {
@@ -3188,7 +3159,7 @@ namespace P.sb3.compiler {
     const NUM1 = util.getInput('NUM1', 'number');
     const NUM2 = util.getInput('NUM2', 'number');
     const input = util.numberInput(`(${NUM1} - ${NUM2})`);
-    input.enableFlag(P.sb3.compiler.InputFlags.NaN); // Infinity - Infinity
+    input.enableFlag(P.sb3.compiler.InputFlags.NotANumber); // Infinity - Infinity
     return input;
   };
   inputLibrary['pen_menu_colorParam'] = function(util) {

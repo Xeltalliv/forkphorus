@@ -10,15 +10,16 @@ declare var FontFaceObserver: FontFaceObserver;
  * Font helpers
  */
 namespace P.fonts {
-  const fontFamilyCache: ObjectMap<string> = {};
+  const fontFamilyCache: Record<string, string> = {};
 
   export const scratch3 = {
-    'Marker': 'fonts/Knewave-Regular.woff',
-    'Handwriting': 'fonts/Handlee-Regular.woff',
-    'Pixel': 'fonts/Grand9K-Pixel.ttf',
-    'Curly': 'fonts/Griffy-Regular.woff',
-    'Serif': 'fonts/SourceSerifPro-Regular.woff',
-    'Sans Serif': 'fonts/NotoSans-Regular.woff',
+    'Marker': 'fonts/Knewave.woff2',
+    'Handwriting': 'fonts/handlee-regular.woff2',
+    'Pixel': 'fonts/Grand9K-Pixel.woff2',
+    'Curly': 'fonts/Griffy-Regular.woff2',
+    'Serif': 'fonts/SourceSerifPro-Regular.woff2',
+    'Sans Serif': 'fonts/NotoSans-Medium.woff2',
+    'Scratch': 'fonts/ScratchSavers_b2.woff2'
   };
 
   /**

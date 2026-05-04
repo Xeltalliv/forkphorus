@@ -7,7 +7,7 @@ License for forkphorus:
 The MIT License (MIT)
 
 Copyright (c) 2013-2017 Nathan Dinsmore
-Copyright (c) 2019-2021 Thomas Weber
+Copyright (c) 2019-2024 Thomas Weber
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
@@ -65,9 +65,6 @@ Redistribution and use in source and binary forms, with or without modification,
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
-if (!('Promise' in window)) {
-    throw new Error('Browser does not support Promise');
-}
 var P;
 (function (P) {
     var config;
@@ -1978,12 +1975,13 @@ var P;
     (function (fonts_1) {
         const fontFamilyCache = {};
         fonts_1.scratch3 = {
-            'Marker': 'fonts/Knewave-Regular.woff',
-            'Handwriting': 'fonts/Handlee-Regular.woff',
-            'Pixel': 'fonts/Grand9K-Pixel.ttf',
-            'Curly': 'fonts/Griffy-Regular.woff',
-            'Serif': 'fonts/SourceSerifPro-Regular.woff',
-            'Sans Serif': 'fonts/NotoSans-Regular.woff',
+            'Marker': 'fonts/Knewave.woff2',
+            'Handwriting': 'fonts/handlee-regular.woff2',
+            'Pixel': 'fonts/Grand9K-Pixel.woff2',
+            'Curly': 'fonts/Griffy-Regular.woff2',
+            'Serif': 'fonts/SourceSerifPro-Regular.woff2',
+            'Sans Serif': 'fonts/NotoSans-Medium.woff2',
+            'Scratch': 'fonts/ScratchSavers_b2.woff2'
         };
         function loadLocalFont(fontFamily, src) {
             if (fontFamilyCache[fontFamily]) {
@@ -2036,7 +2034,7 @@ var P;
     var i18n;
     (function (i18n) {
         'use strict';
-        const SUPPORTED_LANGUAGES = ['en', 'es'];
+        const SUPPORTED_LANGUAGES = ['en'];
         const DEFAULT_LANGUAGE = 'en';
         function getLanguage() {
             let language = navigator.language;
@@ -2111,43 +2109,77 @@ var P;
         }
         let readers;
         (function (readers) {
-            function toArrayBuffer(object) {
-                return new Promise((resolve, reject) => {
-                    const fileReader = new FileReader();
-                    fileReader.onloadend = function () {
-                        resolve(fileReader.result);
-                    };
-                    fileReader.onerror = function (err) {
-                        reject(new Error('Could not read object as ArrayBuffer'));
-                    };
-                    fileReader.readAsArrayBuffer(object);
-                });
+            function toArrayBuffer(blob) {
+                if (typeof FileReader === 'function') {
+                    return new Promise((resolve, reject) => {
+                        const fileReader = new FileReader();
+                        fileReader.onloadend = () => {
+                            resolve(fileReader.result);
+                        };
+                        fileReader.onerror = () => {
+                            reject(new Error(`Could not read as ArrayBuffer: ${fileReader.error}`));
+                        };
+                        fileReader.readAsArrayBuffer(blob);
+                    });
+                }
+                else if (typeof blob.arrayBuffer === 'function') {
+                    return blob.arrayBuffer();
+                }
+                else {
+                    return Promise.reject(new Error('Browser does not support read as ArrayBuffer'));
+                }
             }
             readers.toArrayBuffer = toArrayBuffer;
-            function toDataURL(object) {
-                return new Promise((resolve, reject) => {
-                    const fileReader = new FileReader();
-                    fileReader.onloadend = function () {
-                        resolve(fileReader.result);
-                    };
-                    fileReader.onerror = function (err) {
-                        reject(new Error('Could not read object as data: URL'));
-                    };
-                    fileReader.readAsDataURL(object);
-                });
+            function toDataURL(blob) {
+                if (typeof FileReader === 'function') {
+                    return new Promise((resolve, reject) => {
+                        const fileReader = new FileReader();
+                        fileReader.onloadend = () => {
+                            resolve(fileReader.result);
+                        };
+                        fileReader.onerror = () => {
+                            reject(new Error(`Could not read as data: URL ${fileReader.error}`));
+                        };
+                        fileReader.readAsDataURL(blob);
+                    });
+                }
+                else if (typeof blob.arrayBuffer === 'function') {
+                    return blob.arrayBuffer()
+                        .then(arrayBuffer => {
+                        const bytes = new Uint8Array(arrayBuffer);
+                        let str = '';
+                        for (let i = 0; i < bytes.length; i++) {
+                            str += String.fromCharCode(bytes[i]);
+                        }
+                        const base64 = btoa(str);
+                        const dataUrl = `data:${blob.type};base64,${base64}`;
+                        return dataUrl;
+                    });
+                }
+                else {
+                    return Promise.reject(new Error('Browser does not support read as data: URL'));
+                }
             }
             readers.toDataURL = toDataURL;
-            function toText(object) {
-                return new Promise((resolve, reject) => {
-                    const fileReader = new FileReader();
-                    fileReader.onloadend = function () {
-                        resolve(fileReader.result);
-                    };
-                    fileReader.onerror = function (err) {
-                        reject(new Error('Could not read object as text'));
-                    };
-                    fileReader.readAsText(object);
-                });
+            function toText(blob) {
+                if (typeof FileReader === 'function') {
+                    return new Promise((resolve, reject) => {
+                        const fileReader = new FileReader();
+                        fileReader.onloadend = () => {
+                            resolve(fileReader.result);
+                        };
+                        fileReader.onerror = () => {
+                            reject(new Error(`Could not read as text: ${fileReader.error}`));
+                        };
+                        fileReader.readAsText(blob);
+                    });
+                }
+                else if (typeof blob.text === 'function') {
+                    return blob.text();
+                }
+                else {
+                    return Promise.reject(new Error('Browser does not support read as text'));
+                }
             }
             readers.toText = toText;
         })(readers = io.readers || (io.readers = {}));
@@ -3068,14 +3100,13 @@ var P;
                     const request = new P.io.Request([
                         'https://trampoline.turbowarp.org/api/projects/$id'.replace('$id', this.id),
                         'https://trampoline.turbowarp.xyz/api/projects/$id'.replace('$id', this.id),
-                        'https://t.unsandboxed.org/api/projects/$id'.replace('$id', this.id),
                     ]);
                     request
                         .setMaxAttempts(1)
                         .ignoreErrors()
                         .load('json')
                         .then((data) => {
-                        if (request.getStatus() === 404) {
+                        if (request.getStatus() === 404 || request.getStatus() === 400) {
                             this.unshared = true;
                         }
                         else {
@@ -3662,41 +3693,41 @@ var P;
                 loader.cleanup();
                 return stage;
             }
+            async getLoader(blob) {
+                try {
+                    const projectText = await P.io.readers.toText(blob);
+                    const projectJson = P.json.parse(projectText);
+                    switch (this.determineProjectType(projectJson)) {
+                        case 'sb2': return new P.sb2.Scratch2Loader(projectJson);
+                        case 'sb3': return new P.sb3.Scratch3Loader(projectJson);
+                    }
+                }
+                catch (e) {
+                    let buffer = await P.io.readers.toArrayBuffer(blob);
+                    if (this.isScratch1Project(buffer)) {
+                        buffer = await this.convertScratch1Project(buffer);
+                    }
+                    else {
+                        try {
+                            const zip = await JSZip.loadAsync(buffer);
+                            const projectJSON = zip.file('project.json');
+                            if (!projectJSON) {
+                                throw new Error('zip is missing project.json');
+                            }
+                            const projectDataText = await projectJSON.async('text');
+                            const projectData = JSON.parse(projectDataText);
+                            if (this.determineProjectType(projectData) === 'sb3') {
+                                return new P.sb3.Scratch3Loader(buffer);
+                            }
+                        }
+                        catch (e) {
+                        }
+                    }
+                    return new P.sb2.SB2FileLoader(buffer);
+                }
+            }
             async loadProjectById(id) {
                 const { loaderId } = this.beginLoadingProject();
-                const getLoader = async (blob) => {
-                    try {
-                        const projectText = await P.io.readers.toText(blob);
-                        const projectJson = P.json.parse(projectText);
-                        switch (this.determineProjectType(projectJson)) {
-                            case 'sb2': return new P.sb2.Scratch2Loader(projectJson);
-                            case 'sb3': return new P.sb3.Scratch3Loader(projectJson);
-                        }
-                    }
-                    catch (e) {
-                        let buffer = await P.io.readers.toArrayBuffer(blob);
-                        if (this.isScratch1Project(buffer)) {
-                            buffer = await this.convertScratch1Project(buffer);
-                        }
-                        else {
-                            try {
-                                const zip = await JSZip.loadAsync(buffer);
-                                const projectJSON = zip.file('project.json');
-                                if (!projectJSON) {
-                                    throw new Error('zip is missing project.json');
-                                }
-                                const projectDataText = await projectJSON.async('text');
-                                const projectData = JSON.parse(projectDataText);
-                                if (this.determineProjectType(projectData) === 'sb3') {
-                                    return new P.sb3.SB3FileLoader(buffer);
-                                }
-                            }
-                            catch (e) {
-                            }
-                        }
-                        return new P.sb2.SB2FileLoader(buffer);
-                    }
-                };
                 try {
                     const meta = new RemoteProjectMeta(id);
                     this.projectMeta = meta;
@@ -3710,7 +3741,7 @@ var P;
                         token = meta.getToken();
                     }
                     const blob = await this.fetchProject(id, token);
-                    const loader = await getLoader(blob);
+                    const loader = await this.getLoader(blob);
                     await this.loadLoader(loaderId, loader);
                 }
                 catch (e) {
@@ -3730,7 +3761,7 @@ var P;
                         loader = new P.sb2.SB2FileLoader(buffer);
                         break;
                     case 'sb3':
-                        loader = new P.sb3.SB3FileLoader(buffer);
+                        loader = new P.sb3.Scratch3Loader(buffer);
                         break;
                     default: throw new Error('Unknown type: ' + type);
                 }
@@ -3760,6 +3791,19 @@ var P;
                 try {
                     this.projectMeta = new BinaryProjectMeta();
                     return await this.loadProjectFromBufferWithType(loaderId, buffer, type);
+                }
+                catch (e) {
+                    if (loaderId.isActive()) {
+                        this.handleError(e);
+                    }
+                }
+            }
+            async loadProjectFromJSON(blob) {
+                const { loaderId } = this.beginLoadingProject();
+                try {
+                    this.projectMeta = new BinaryProjectMeta();
+                    const loader = await this.getLoader(blob);
+                    await this.loadLoader(loaderId, loader);
                 }
                 catch (e) {
                     if (loaderId.isActive()) {
@@ -4619,7 +4663,6 @@ var P;
                 this.isRunning = true;
                 if (this.interval)
                     return;
-                window.addEventListener('error', this.onError);
                 this.baseTime = Date.now();
                 this.interval = setInterval(this.step, 1000 / this.framerate);
                 if (audioContext)
@@ -4631,7 +4674,6 @@ var P;
                     this.baseNow = this.now();
                     clearInterval(this.interval);
                     this.interval = 0;
-                    window.removeEventListener('error', this.onError);
                     if (audioContext)
                         audioContext.suspend();
                     this.stage.pauseExtensions();
@@ -4694,6 +4736,14 @@ var P;
                 }
             }
             step() {
+                try {
+                    this._step();
+                }
+                catch (e) {
+                    this.onError(e);
+                }
+            }
+            _step() {
                 self = this.stage;
                 runtime = this;
                 VISUAL = false;
@@ -4744,7 +4794,7 @@ var P;
             }
             onError(e) {
                 clearInterval(this.interval);
-                this.handleError(e.error);
+                this.handleError(e);
             }
             handleError(e) {
                 console.error(e);
@@ -4828,6 +4878,44 @@ var P;
         }
         runtime_1.scopedEval = scopedEval;
     })(runtime = P.runtime || (P.runtime = {}));
+})(P || (P = {}));
+var P;
+(function (P) {
+    var sandbox;
+    (function (sandbox) {
+        let iframe = null;
+        sandbox.getSandbox = () => {
+            if (!iframe) {
+                iframe = document.createElement('iframe');
+                iframe.className = 'forkphorus-sandbox';
+                iframe.sandbox = 'allow-same-origin';
+                iframe.style.position = 'absolute';
+                iframe.style.top = '-10000px';
+                iframe.style.left = '-10000px';
+                iframe.style.width = '0';
+                iframe.style.height = '0';
+                iframe.style.opacity = '0';
+                iframe.style.visibility = 'hidden';
+                iframe.style.pointerEvents = 'none';
+                iframe.tabIndex = -1;
+                iframe.ariaHidden = 'true';
+                document.body.appendChild(iframe);
+                iframe.contentDocument.open();
+                iframe.contentDocument.write(`
+            <!DOCTYPE html>
+            <html>
+                <head>
+                    <meta charset="utf-8">
+                    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline' data:; font-src data:; img-src data:">
+                </head>
+                <body></body>
+            </html>
+            `);
+                iframe.contentDocument.close();
+            }
+            return iframe.contentDocument.body;
+        };
+    })(sandbox = P.sandbox || (P.sandbox = {}));
 })(P || (P = {}));
 var P;
 (function (P) {
@@ -5282,23 +5370,22 @@ var P;
                     IN_PLACE: true,
                     USE_PROFILES: { svg: true }
                 });
-                svg.style.visibility = 'hidden';
-                svg.style.position = 'absolute';
-                svg.style.left = '-10000px';
-                svg.style.top = '-10000px';
-                document.body.appendChild(svg);
-                const viewBox = svg.viewBox.baseVal;
-                if (viewBox && (viewBox.x || viewBox.y)) {
-                    svg.width.baseVal.value = viewBox.width - viewBox.x;
-                    svg.height.baseVal.value = viewBox.height - viewBox.y;
-                    viewBox.x = 0;
-                    viewBox.y = 0;
-                    viewBox.width = 0;
-                    viewBox.height = 0;
+                try {
+                    P.sandbox.getSandbox().appendChild(svg);
+                    const viewBox = svg.viewBox.baseVal;
+                    if (viewBox && (viewBox.x || viewBox.y)) {
+                        svg.width.baseVal.value = viewBox.width - viewBox.x;
+                        svg.height.baseVal.value = viewBox.height - viewBox.y;
+                        viewBox.x = 0;
+                        viewBox.y = 0;
+                        viewBox.width = 0;
+                        viewBox.height = 0;
+                    }
+                    patchSVG(svg, svg);
                 }
-                patchSVG(svg, svg);
-                document.body.removeChild(svg);
-                svg.style.visibility = svg.style.position = svg.style.left = svg.style.top = '';
+                finally {
+                    doc.appendChild(svg);
+                }
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
                 if (!ctx) {
@@ -6984,10 +7071,80 @@ var P;
             svg.appendChild(style);
             return svg;
         }
-        class BaseSB3Loader extends P.io.Loader {
-            constructor() {
-                super(...arguments);
+        class Scratch3Loader extends P.io.Loader {
+            constructor(input) {
+                super();
+                this.zip = null;
                 this.needsMusic = false;
+                this.input = input;
+            }
+            async getAsText(path) {
+                if (this.zip) {
+                    try {
+                        const file = this.zip.file(path);
+                        if (!file) {
+                            throw new Error(`${path} does not exist in zip as text`);
+                        }
+                        const task = this.addTask(new P.io.Manual());
+                        const text = await file.async('text');
+                        task.markComplete();
+                        return text;
+                    }
+                    catch (e) {
+                        console.warn(e);
+                    }
+                }
+                return this.addTask(new P.io.Request(sb3.ASSETS_API.replace('$md5ext', path))).load('text');
+            }
+            async getAsArrayBuffer(path) {
+                if (this.zip) {
+                    try {
+                        const file = this.zip.file(path);
+                        if (!file) {
+                            throw new Error(`${path} does not exist in zip as text`);
+                        }
+                        const task = this.addTask(new P.io.Manual());
+                        const buffer = await file.async('arraybuffer');
+                        task.markComplete();
+                        return buffer;
+                    }
+                    catch (e) {
+                        console.warn(e);
+                    }
+                }
+                return this.addTask(new P.io.Request(sb3.ASSETS_API.replace('$md5ext', path))).load('arraybuffer');
+            }
+            async getAsImage(path, format) {
+                if (this.zip) {
+                    try {
+                        const file = this.zip.file(path);
+                        if (!file) {
+                            throw new Error(`${path} does not exist in zip as text`);
+                        }
+                        const task = this.addTask(new P.io.Manual());
+                        const base64 = await file.async('base64');
+                        const image = await new Promise((resolve, reject) => {
+                            const image = new Image();
+                            image.onload = () => {
+                                image.onload = null;
+                                image.onerror = null;
+                                task.markComplete();
+                                resolve(image);
+                            };
+                            image.onerror = (error) => {
+                                image.onload = null;
+                                image.onerror = null;
+                                reject(new Error('Failed to load image: ' + path + '.' + format));
+                            };
+                            image.src = 'data:image/' + format + ';base64,' + base64;
+                        });
+                        return image;
+                    }
+                    catch (e) {
+                        console.warn(e);
+                    }
+                }
+                return this.addTask(new P.io.Img(sb3.ASSETS_API.replace('$md5ext', path))).load();
             }
             getSVG(path, costumeOptions) {
                 return this.getAsText(path)
@@ -7057,41 +7214,45 @@ var P;
             }
             loadTarget(data) {
                 const target = new (data.isStage ? Scratch3Stage : Scratch3Sprite)(null);
-                for (const id of Object.keys(data.variables)) {
-                    const variable = data.variables[id];
-                    const name = variable[0];
-                    const value = variable[1];
-                    if (variable.length > 2) {
-                        const cloud = variable[2];
-                        if (cloud) {
-                            if (data.isStage) {
-                                target.cloudVariables.push(name);
-                            }
-                            else {
-                                console.warn('Cloud variable found on a non-stage object. Skipping.');
+                if (Object.prototype.hasOwnProperty.call(data, 'variables')) {
+                    for (const id of Object.keys(data.variables)) {
+                        const variable = data.variables[id];
+                        const name = variable[0];
+                        const value = variable[1];
+                        if (variable.length > 2) {
+                            const cloud = variable[2];
+                            if (cloud) {
+                                if (data.isStage) {
+                                    target.cloudVariables.push(name);
+                                }
+                                else {
+                                    console.warn('Cloud variable found on a non-stage object. Skipping.');
+                                }
                             }
                         }
+                        target.vars[name] = value;
+                        target.varIds[id] = name;
                     }
-                    target.vars[name] = value;
-                    target.varIds[id] = name;
                 }
-                for (const id of Object.keys(data.lists)) {
-                    const list = data.lists[id];
-                    const name = list[0];
-                    const content = list[1];
-                    if (target.lists[name]) {
-                        continue;
+                if (Object.prototype.hasOwnProperty.call(data, 'lists')) {
+                    for (const id of Object.keys(data.lists)) {
+                        const list = data.lists[id];
+                        const name = list[0];
+                        const content = list[1];
+                        if (target.lists[name]) {
+                            continue;
+                        }
+                        const scratchList = createList();
+                        for (var i = 0; i < content.length; i++) {
+                            scratchList[i] = content[i];
+                        }
+                        target.lists[name] = scratchList;
+                        target.listIds[id] = name;
                     }
-                    const scratchList = createList();
-                    for (var i = 0; i < content.length; i++) {
-                        scratchList[i] = content[i];
-                    }
-                    target.lists[name] = scratchList;
-                    target.listIds[id] = name;
                 }
                 target.name = data.name;
                 target.currentCostumeIndex = data.currentCostume;
-                if ('volume' in data) {
+                if (Object.prototype.hasOwnProperty.call(data, 'volume')) {
                     target.volume = data.volume / 100;
                 }
                 target.sb3data = data;
@@ -7150,16 +7311,26 @@ var P;
                     console.timeEnd('Scratch 3 compile');
                 }
             }
-            async load() {
-                if (!this.projectData) {
-                    throw new Error('Project data is missing or invalid');
+            async loadProjectData() {
+                if (!this.input) {
+                    throw new Error('Input missing');
                 }
-                if (!Array.isArray(this.projectData.targets)) {
+                if (this.input instanceof ArrayBuffer) {
+                    this.zip = await JSZip.loadAsync(this.input);
+                    this.input = null;
+                    const text = await this.getAsText('project.json');
+                    return JSON.parse(text);
+                }
+                return this.input;
+            }
+            async load() {
+                const projectData = await this.loadProjectData();
+                if (!Array.isArray(projectData.targets)) {
                     throw new Error('Invalid project data: missing targets');
                 }
                 await this.loadRequiredAssets();
                 this.resetTasks();
-                const targets = await Promise.all(this.projectData.targets
+                const targets = await Promise.all(projectData.targets
                     .sort((a, b) => a.layerOrder - b.layerOrder)
                     .map((data) => this.loadTarget(data)));
                 if (this.aborted) {
@@ -7172,8 +7343,8 @@ var P;
                 const sprites = targets.filter((i) => i.isSprite);
                 sprites.forEach((sprite) => sprite.stage = stage);
                 stage.children = sprites;
-                if (this.projectData.monitors) {
-                    stage.allWatchers = this.projectData.monitors
+                if (projectData.monitors) {
+                    stage.allWatchers = projectData.monitors
                         .map((data) => this.loadWatcher(data, stage))
                         .filter((i) => i && i.valid);
                     stage.allWatchers.forEach((watcher) => watcher.init());
@@ -7182,113 +7353,7 @@ var P;
                 if (this.needsMusic) {
                     await this.loadSoundbank();
                 }
-                this.projectData = null;
                 return stage;
-            }
-        }
-        sb3.BaseSB3Loader = BaseSB3Loader;
-        class SB3FileLoader extends BaseSB3Loader {
-            constructor(buffer) {
-                super();
-                this.buffer = buffer;
-            }
-            getAsText(path) {
-                const task = this.addTask(new P.io.Manual());
-                const file = this.zip.file(path);
-                if (!file) {
-                    throw new Error('cannot find file as text: ' + path);
-                }
-                return file.async('text')
-                    .then((response) => {
-                    task.markComplete();
-                    return response;
-                });
-            }
-            getAsArrayBuffer(path) {
-                const task = this.addTask(new P.io.Manual());
-                const file = this.zip.file(path);
-                if (!file) {
-                    throw new Error('cannot find file as arraybuffer: ' + path);
-                }
-                return file.async('arraybuffer')
-                    .then((response) => {
-                    task.markComplete();
-                    return response;
-                });
-            }
-            getAsBase64(path) {
-                const task = this.addTask(new P.io.Manual());
-                const file = this.zip.file(path);
-                if (!file) {
-                    throw new Error('cannot find file as base64: ' + path);
-                }
-                return file.async('base64')
-                    .then((response) => {
-                    task.markComplete();
-                    return response;
-                });
-            }
-            getAsImage(path, format) {
-                const task = this.addTask(new P.io.Manual());
-                return this.getAsBase64(path)
-                    .then((imageData) => {
-                    return new Promise((resolve, reject) => {
-                        const image = new Image();
-                        image.onload = () => {
-                            task.markComplete();
-                            resolve(image);
-                        };
-                        image.onerror = (error) => {
-                            reject(new Error('Failed to load image: ' + path + '.' + format));
-                        };
-                        image.src = 'data:image/' + format + ';base64,' + imageData;
-                    });
-                });
-            }
-            load() {
-                return JSZip.loadAsync(this.buffer)
-                    .then((data) => {
-                    this.zip = data;
-                    return this.getAsText('project.json');
-                })
-                    .then((project) => {
-                    this.projectData = JSON.parse(project);
-                })
-                    .then(() => super.load());
-            }
-        }
-        sb3.SB3FileLoader = SB3FileLoader;
-        class Scratch3Loader extends BaseSB3Loader {
-            constructor(idOrData) {
-                super();
-                if (typeof idOrData === 'object') {
-                    this.projectData = idOrData;
-                    this.projectId = null;
-                }
-                else {
-                    this.projectId = idOrData;
-                }
-            }
-            getAsText(path) {
-                return this.addTask(new P.io.Request(sb3.ASSETS_API.replace('$md5ext', path))).load('text');
-            }
-            getAsArrayBuffer(path) {
-                return this.addTask(new P.io.Request(sb3.ASSETS_API.replace('$md5ext', path))).load('arraybuffer');
-            }
-            getAsImage(path) {
-                return this.addTask(new P.io.Img(sb3.ASSETS_API.replace('$md5ext', path))).load();
-            }
-            load() {
-                if (this.projectId) {
-                    return this.addTask(new P.io.Request(P.config.PROJECT_API.replace('$id', '' + this.projectId))).load('json')
-                        .then((data) => {
-                        this.projectData = data;
-                        return super.load();
-                    });
-                }
-                else {
-                    return super.load();
-                }
             }
         }
         sb3.Scratch3Loader = Scratch3Loader;

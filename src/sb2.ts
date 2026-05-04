@@ -3,6 +3,7 @@
 /// <reference path="core.ts" />
 /// <reference path="fonts.ts" />
 /// <reference path="config.ts" />
+/// <reference path="sandbox.ts" />
 
 namespace P.sb2 {
   const ASSET_URL = 'https://cdn.assets.scratch.mit.edu/internalapi/asset/';
@@ -517,23 +518,23 @@ namespace P.sb2 {
         IN_PLACE: true,
         USE_PROFILES: { svg: true }
       });
-      svg.style.visibility = 'hidden';
-      svg.style.position = 'absolute';
-      svg.style.left = '-10000px';
-      svg.style.top = '-10000px';
-      document.body.appendChild(svg);
-      const viewBox = svg.viewBox.baseVal;
-      if (viewBox && (viewBox.x || viewBox.y)) {
-        svg.width.baseVal.value = viewBox.width - viewBox.x;
-        svg.height.baseVal.value = viewBox.height - viewBox.y;
-        viewBox.x = 0;
-        viewBox.y = 0;
-        viewBox.width = 0;
-        viewBox.height = 0;
+      try {
+        P.sandbox.getSandbox().appendChild(svg);
+        const viewBox = svg.viewBox.baseVal;
+        if (viewBox && (viewBox.x || viewBox.y)) {
+          svg.width.baseVal.value = viewBox.width - viewBox.x;
+          svg.height.baseVal.value = viewBox.height - viewBox.y;
+          viewBox.x = 0;
+          viewBox.y = 0;
+          viewBox.width = 0;
+          viewBox.height = 0;
+        }
+        patchSVG(svg, svg);
+      } finally {
+        // Regardless of any errors trying to patch up the SVG, put the SVG back into the
+        // inert document it was parsed in as an extra security precaution.
+        doc.appendChild(svg);
       }
-      patchSVG(svg, svg);
-      document.body.removeChild(svg);
-      svg.style.visibility = svg.style.position = svg.style.left = svg.style.top = '';
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -690,7 +691,7 @@ namespace P.sb2 {
   }
 
   function patchSVG(svg, element) {
-    const FONTS: ObjectMap<string> = {
+    const FONTS: Record<string, string> = {
       '': 'Helvetica',
       Donegal: 'Donegal One',
       Gloria: 'Gloria Hallelujah',
@@ -698,7 +699,7 @@ namespace P.sb2 {
       Mystery: 'Mystery Quest'
     };
 
-    const LINE_HEIGHTS: ObjectMap<number> = {
+    const LINE_HEIGHTS: Record<string, number> = {
       Helvetica: 1.13,
       'Donegal One': 1.25,
       'Gloria Hallelujah': 1.97,

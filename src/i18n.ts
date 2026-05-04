@@ -6,9 +6,9 @@
 namespace P.i18n {
   'use strict';
 
-  type Translations = ObjectMap<string>;
+  type Translations = Record<string, string>;
 
-  const SUPPORTED_LANGUAGES = ['en', 'es'];
+  const SUPPORTED_LANGUAGES = ['en'];
   const DEFAULT_LANGUAGE = 'en';
 
   function getLanguage(): string {
